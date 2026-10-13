@@ -1,16 +1,19 @@
 name: CI
 
-# Skeleton stage: this repository does not have its code yet. This workflow guards what does not
-# depend on the language - the minimum content of a code repository (norm 5.1) and the absence
-# of secrets. The pull request that brings the code replaces it with the build and test steps of
-# the language (Annex I).
+# Every pull request builds the repository and runs its tests on a clean machine.
+# "It works on my computer" is not evidence; a green check here is.
 
 on:
   pull_request:
     branches: [develop, qa, main]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   base:
@@ -21,7 +24,7 @@ jobs:
 
       - name: The repository has its minimum content
         run: |
-          for file in README.md .github/CODEOWNERS .gitignore .env.example; do
+          for file in README.md .github/CODEOWNERS .gitignore .env.example pom.xml deploy/Dockerfile deploy/compose.yml; do
             [ -f "$file" ] || { echo "missing $file"; exit 1; }
           done
 
@@ -31,3 +34,34 @@ jobs:
             echo "A real environment file or key is versioned"
             exit 1
           fi
+
+      - name: The core depends on no framework (norm 5.3.3)
+        run: |
+          if grep -nE '<(groupId|artifactId)>(org\.springframework|spring-|jakarta|javax)' sales-core/pom.xml; then
+            echo "sales-core must not declare a framework dependency"
+            exit 1
+          fi
+          if grep -rnE 'import (org\.springframework|jakarta|javax)' sales-core/src; then
+            echo "sales-core must not import a framework"
+            exit 1
+          fi
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: mvn -B verify
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: The container image builds
+        run: docker build -f deploy/Dockerfile -t sales-api:ci .
