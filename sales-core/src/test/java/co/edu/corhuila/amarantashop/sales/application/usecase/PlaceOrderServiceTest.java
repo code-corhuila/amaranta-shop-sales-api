@@ -1,6 +1,7 @@
 package co.edu.corhuila.amarantashop.sales.application.usecase;
 
 import static co.edu.corhuila.amarantashop.sales.domain.model.OrderRequests.PRODUCT_A;
+import static co.edu.corhuila.amarantashop.sales.domain.model.OrderRequests.PRODUCT_B;
 import static co.edu.corhuila.amarantashop.sales.domain.model.OrderRequests.clockAt;
 import static co.edu.corhuila.amarantashop.sales.domain.model.OrderRequests.openShop;
 import static co.edu.corhuila.amarantashop.sales.domain.model.OrderRequests.valid;
@@ -76,6 +77,18 @@ class PlaceOrderServiceTest {
         assertThat(orders.byId).hasSize(1);
     }
 
+    @Test
+    void releasesTheReservationOfARequestThatLostTheRaceForTheSameKey() {
+        PlacedOrder winner = place(valid());
+        orders.winnerOfTheRace = winner.order();
+
+        PlacedOrder loser = service.execute(new PlaceOrderCommand("another-key-0002", valid()));
+
+        assertThat(loser.replayed()).isTrue();
+        assertThat(loser.order()).isSameAs(winner.order());
+        assertThat(stock.released).hasSize(1); // what the loser reserved is given back
+    }
+
     // CA-C3.3: a rule that needs no Catalog data never calls Catalog -----------------------------
 
     @Test
@@ -123,6 +136,19 @@ class PlaceOrderServiceTest {
         assertThat(stock.released).isEmpty();
     }
 
+    // RN-09: compensation -----------------------------------------------------------------------
+
+    @Test
+    void releasesTheReservationWhenSavingFails() {
+        orders.failOnSave = new IllegalStateException("database down");
+
+        assertThatThrownBy(() -> place(valid())).isInstanceOf(IllegalStateException.class).hasMessage("database down");
+
+        assertThat(stock.released).hasSize(1);
+        assertThat(stock.released.get(0)).containsExactlyElementsOf(valid().lines());
+        assertThat(events.created).isEmpty();
+    }
+
     @Test
     void keepsTheReservationWhenOnlyPublishingTheEventFails() {
         events.failOnPublish = new IllegalStateException("event bus down");
@@ -132,5 +158,37 @@ class PlaceOrderServiceTest {
         assertThat(placed.order().status()).isEqualTo(OrderStatus.PENDING);
         assertThat(orders.byId).hasSize(1);
         assertThat(stock.released).isEmpty(); // the order exists, so its stock is spoken for
+    }
+
+    @Test
+    void neverRetriesARelease_andTheOriginalErrorSurvives() {
+        orders.failOnSave = new IllegalStateException("database down");
+        stock.failOnRelease = new CatalogUnavailableException("catalog down", null);
+
+        assertThatThrownBy(() -> place(valid()))
+                .hasMessage("database down")
+                .satisfies(e -> assertThat(e.getSuppressed()).hasSize(1));
+
+        assertThat(stock.released).hasSize(1); // one attempt: a retry would credit the stock twice
+    }
+
+    @Test
+    void refusesToBuildAnOrderFromLinesThatAreNotWhatWasAsked() {
+        // Catalog answered for the wrong product: the reservation is given back and nothing is saved.
+        var misbehaving = new Fakes.Stock() {
+            @Override
+            public java.util.List<co.edu.corhuila.amarantashop.sales.application.port.out.StockLine> reserve(
+                    java.util.List<RequestedLine> lines) {
+                reserved.add(lines);
+                return java.util.List.of(new co.edu.corhuila.amarantashop.sales.application.port.out.StockLine(
+                        PRODUCT_B, "Cat toy", Money.pesos(12_500), 1));
+            }
+        };
+        service = new PlaceOrderService(orders, misbehaving, new Fakes.SequentialIds(), events, openShop());
+
+        assertThatThrownBy(() -> place(withLines(new RequestedLine(PRODUCT_A, 1)))).isInstanceOf(IllegalStateException.class);
+
+        assertThat(orders.byId).isEmpty();
+        assertThat(misbehaving.released).hasSize(1);
     }
 }
