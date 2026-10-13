@@ -62,15 +62,37 @@ declares no framework in its `pom.xml` and CI fails if it imports one. A port is
 adapter implements it outside. The domain throws typed errors and does not know what a `422` is: the status is
 decided in one place in the HTTP adapter.
 
-## How to build and test
+## The contract
 
-You need only Docker.
+Public paths go through the gateway as `/api/v1/orders*`, before and after the move out of the monolith. Every error is
+`{error, message, details?, traceId}` and the status is decided in one place (`ErrorHandler`).
+
+| Route | Who | Answers |
+|---|---|---|
+| `POST /api/v1/orders` + `Idempotency-Key` | a visitor **with no token**, or any customer | `201` + `Location`; `200` and the same order on a retry; `400` one entry per invalid field; `401` if a token is present but broken; `422` a rule of the business; `503` Catalog is down |
+| `POST /api/v1/orders/in-store` | `RECEPTIONIST` | the same, attributed to the receptionist; `403` for any other role, before any stock is touched |
+| `POST /api/v1/orders/{id}/mark-paid` | `RECEPTIONIST` | `200`; `422 INVALID_STATUS_TRANSITION` the second time; `404`; `400` for a malformed id |
+| `GET /api/v1/orders?page=&limit=` | any token | `{data, meta}`, my orders only, newest first, `limit` 1-100 (20 by default) |
+| `GET /health` | nobody | `200`, no token |
+
+Each service validates the token itself, with RS256 only. The gateway only checks that one exists.
+
+## How to build, test and run
+
+You need only Docker. Nothing is installed: Maven, Java, PostgreSQL and Flyway all run in containers.
 
 ```bash
-bash scripts/mvn.sh verify              # compile and test every module
-bash scripts/mvn.sh -pl sales-core test # only the core: no server, no database, a few seconds
+bash scripts/mvn.sh verify              # compile and test every module (149 tests; 7 need the database)
+bash scripts/mvn.sh -pl sales-core test # the core alone: no server, no database, a few seconds
+bash scripts/integration-test.sh        # the repository against a real PostgreSQL, as sales_app
+bash scripts/smoke-test.sh              # the container, a real database and a Catalog that is switched off
 docker build -f deploy/Dockerfile -t sales-api .    # the container image
 ```
+
+The last two need the `amaranta-shop-sales-db` repository next to this one (or `SALES_DB_DIR`): they build the real
+schema with its Flyway. The smoke test is the demo of the release in one command: a visitor buys, the order is in the
+database, a retry gives the same order, a receptionist marks it as paid, and **with Catalog down the checkout answers
+`503` and saves nothing**. In CI those two run when the repository variable `SALES_DB_CHECKOUT` is `true`.
 
 ## Configuration
 
@@ -79,39 +101,57 @@ Every variable has a placeholder in `.env.example`; the real values never enter 
 | Variable | What it is |
 |---|---|
 | `PORT` | HTTP port, 8080 |
-| `DATABASE_URL`, `DATABASE_USER`, `DATABASE_PASSWORD` | the PostgreSQL instance, as `sales_app` |
-| `JWT_PUBLIC_KEY` or `JWT_PUBLIC_KEY_FILE` | public key of `amaranta-shop-security` |
+| `DATABASE_URL`, `DATABASE_USER`, `DATABASE_PASSWORD` | the PostgreSQL instance, as `sales_app`. **Empty: orders are kept in memory** (local runs) |
+| `JWT_PUBLIC_KEY` or `JWT_PUBLIC_KEY_FILE` | public key of `amaranta-shop-security`. Without one the service refuses to start |
 | `CATALOG_API_URL` | the internal stock endpoints of Catalog |
-| `DB_POOL_MAX`, `DB_STATEMENT_TIMEOUT_MS` | pool size and time per statement, declared in the composition root |
+| `DB_POOL_MAX`, `DB_STATEMENT_TIMEOUT_MS` | pool size and time per statement |
+| `CLOCK_FIXED_AT` | **demos and smoke tests only**: the service believes it is that instant, and warns. Never in production |
+
+The limits are written with their value in `SalesConfiguration` and `application.yml` (norm 5.3.10): connection timeout 5 s,
+keep-alive 60 s, graceful shutdown 20 s, pool 10, a wait of 5 s for a connection, 5 s per statement, 2 s to connect to
+Catalog and 3 s per call.
 
 ## The rules and the tests that prove them
 
-Each rule of the [spec](https://github.com/code-corhuila/amaranta-shop-docs/blob/main/specs/checkout.md) (section 4) is
-a named test, written before the code (TDD). A rule without a test is an intention, not a rule.
+Each rule of the [spec](https://github.com/code-corhuila/amaranta-shop-docs/blob/main/specs/checkout.md) (section 4) is a
+named test, written before the code (TDD). A rule without a test is an intention, not a rule.
 
 | Rule | What it says | Test |
 |---|---|---|
 | RN-01 | the total is the sum of the lines | `OrderTest.totalEqualsTheSumOfTheLines` |
 | RN-02 | at least one line (`INV-ORDER-004`) | `OrderTest.rejectsAnOrderWithoutLines` |
 | RN-03 | a product once per order (`INV-ORDER-003`) | `OrderTest.rejectsTheSameProductTwice` |
-| RN-04 | a quantity from 1 to 50 (`INV-ORDER-ITEM-001`) | `OrderTest.rejectsAQuantityOutsideOneToFifty`, `OrderLineTest` |
+| RN-04 | a quantity from 1 to 50 (`INV-ORDER-ITEM-001`) | `OrderTest.rejectsAQuantityOutsideOneToFifty`, `OrderLineTest`, `PlaceOrderHttpTest.everyInvalidFieldIsNamed` |
 | RN-05 | contact name and phone, not blank (`INV-ORDER-006`) | `OrderTest.rejectsBlankContactData` |
 | RN-06 | a delivery needs an address, a pickup stores none (`INV-ORDER-007`) | `OrderTest.requiresAnAddressForDelivery`, `dropsTheAddressOnPickup` |
 | RN-07 | no order while the shop is closed, Bogota time (`INV-ORDER-008`) | `OrderTest.rejectsOrdersWhileTheShopIsClosed`, `ShopHoursTest` |
+| RN-08 | stock is reserved and released only through Catalog | `CatalogStockHttpAdapterTest` (a real HTTP server) |
+| RN-09 | a rejected order gives its reservation back, once, never retried | `PlaceOrderServiceTest.releasesTheReservationWhenSavingFails`, `neverRetriesARelease_andTheOriginalErrorSurvives`, `CatalogStockHttpAdapterTest.aReleaseThatFailsIsNeverRetried` |
 | RN-10 | nothing changes after the order, except the payment | `OrderPaymentTest.hasNoMutatorExceptPay`, `theLinesOfAnOrderCannotBeChangedFromOutside` |
-| RN-11 | only a `PENDING` order can be paid (`INV-ORDER-005`) | `OrderPaymentTest.onlyAPendingOrderCanBePaid` |
-| RN-12 | a line keeps the name and price of the purchase | `OrderLineTest.keepsTheNameAndThePriceOfThePurchase` |
-| RN-09 | a rejected order gives its reservation back, once, never retried | `PlaceOrderServiceTest.releasesTheReservationWhenSavingFails`, `neverRetriesARelease_andTheOriginalErrorSurvives` |
-| RN-15 | one order per `Idempotency-Key`; the stock is reserved once | `PlaceOrderServiceTest.replaysTheSameOrderForTheSameKeyAndReservesOnce`, `releasesTheReservationOfARequestThatLostTheRaceForTheSameKey` |
-| CA-C3.3 | a rule that needs no Catalog data never calls Catalog | `PlaceOrderServiceTest.doesNotReserveWhenTheShopIsClosed`, `doesNotReserveForADuplicateLineABlankContactOrAnEmptyList` |
+| RN-11 | only a `PENDING` order can be paid (`INV-ORDER-005`) | `OrderPaymentTest.onlyAPendingOrderCanBePaid`, `PayAndListHttpTest` |
+| RN-12 | a line keeps the name and price of the purchase | `OrderLineTest.keepsTheNameAndThePriceOfThePurchase`, the repository contract |
+| RN-13 | other domains by id only; `sales_app` writes only in `sales` | the integration test connects as `sales_app`; the privilege tests live in `sales-db` |
+| RN-14 | guest on `POST /orders`; receptionist on in-store and mark-paid; token on the rest | `AuthFilterTest`, `PlaceOrderHttpTest`, `PayAndListHttpTest`, `SalesHttpTest` |
+| RN-15 | one order per `Idempotency-Key`; the stock is reserved once | `PlaceOrderServiceTest.replaysTheSameOrder...`, `JdbcOrderRepositoryIntegrationTest.twoRequestsWithTheSameKeyAtTheSameTimeCreateExactlyOneOrder` |
+| CA-C1.4 | a present but broken token is a `401`, never a silent guest purchase | `AuthFilterTest.aBrokenTokenOnTheGuestRouteIs401NotAGuestPurchase` |
+| CA-C3.3 | a rule that needs no Catalog data never calls Catalog | `PlaceOrderServiceTest.doesNotReserveWhenTheShopIsClosed`, `PlaceOrderHttpTest.aClosedShopIs422WithItsRule_andCatalogIsNeverCalled` |
 | CA-C3.5 | only the event failing keeps the stock: the order exists | `PlaceOrderServiceTest.keepsTheReservationWhenOnlyPublishingTheEventFails` |
-| CA-C5 | mark as paid: only `PENDING`, unknown id is not found, lines untouched | `OrderQueriesTest.marksAPendingOrderAsPaidAndSavesIt`, `refusesToPayTwice`, `reportsAnOrderThatDoesNotExist` |
-| CA-C6 | my orders only, newest first, bounded pages | `OrderQueriesTest.listsMyOrdersOnlyAndNewestFirst`, `paginatesAndSaysHowManyPagesThereAre`, `refusesAPageOrALimitOutOfRange` |
-| RN-08, RN-13, RN-14 | stock through Catalog, data isolation, access | next pull requests (adapters) |
+| CA-C5, CA-C6 | pay and list | `OrderQueriesTest`, `PayAndListHttpTest` |
+
+## Decisions and residues, declared
+
+- **Whole pesos and plural table names** (`orders`, `order_items`), as in the monolith: OD-1 and OD-4 of the spec.
+- **The lines of an order come back sorted by name**, because the schema keeps no line number. A later migration can add one.
+- **Reserving can leave units reserved** if this service dies between Catalog's answer and the save: the declared residue
+  of DP-8. A reservation id with an idempotent release is the upgrade path.
+- **`InMemoryOrderRepository` ships in the jar** so the service runs without a database; it honours the same contract as the
+  PostgreSQL one and logs a warning on start.
+- **Not in this cut**: `GET /api/v1/orders/{id}` (the `Location` header names it), cancelling and fulfilling an order,
+  payment processing and a message broker (spec section 6).
 
 ## Status
 
-The domain and the checkout are done and proven: 67 tests that run in seconds with no server and no database,
-Catalog and the repository replaced by doubles. Next, each its own pull request and each test-first:
-`feat/http-error-envelope`, `feat/order-routes`,
-`feat/jdbc-order-repository` and `feat/catalog-stock-adapter`.
+Complete for the checkout: domain, use cases, HTTP, PostgreSQL, Catalog, the composition root and the container, with the
+end-to-end demo. Next in the system: `amaranta-shop-catalog-api` must serve the two internal endpoints this service calls,
+and `amaranta-shop-api-gateway` must route `/api/v1/orders*` here; then the contract suite of the spec (section 8.5, step 6)
+runs against this service.
