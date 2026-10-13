@@ -11,6 +11,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import co.edu.corhuila.amarantashop.sales.adapter.in.http.Rs256Verifier.Principal;
 import co.edu.corhuila.amarantashop.sales.adapter.out.persistence.InMemoryOrderRepository;
 import co.edu.corhuila.amarantashop.sales.application.port.out.CatalogUnavailableException;
+import co.edu.corhuila.amarantashop.sales.application.usecase.ListMyOrdersService;
+import co.edu.corhuila.amarantashop.sales.application.usecase.MarkOrderAsPaidService;
 import co.edu.corhuila.amarantashop.sales.application.usecase.PlaceOrderService;
 import co.edu.corhuila.amarantashop.sales.domain.model.BusinessRuleViolation;
 import co.edu.corhuila.amarantashop.sales.domain.model.Channel;
@@ -53,7 +55,8 @@ class PlaceOrderHttpTest {
 
     private void open(Instant now) {
         Clock clock = Clock.fixed(now, ZoneOffset.UTC);
-        var controller = new OrderController(new PlaceOrderService(orders, stock, UUID::randomUUID, o -> { }, clock));
+        var controller = new OrderController(new PlaceOrderService(orders, stock, UUID::randomUUID, o -> { }, clock),
+                new MarkOrderAsPaidService(orders), new ListMyOrdersService(orders));
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ErrorHandler())
                 .addFilters(new CorrelationFilter()).build();
     }

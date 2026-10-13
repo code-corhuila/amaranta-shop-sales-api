@@ -3,6 +3,8 @@ package co.edu.corhuila.amarantashop.sales.adapter.in.http;
 import co.edu.corhuila.amarantashop.sales.adapter.in.http.ApiError.FieldError;
 import co.edu.corhuila.amarantashop.sales.adapter.in.http.ApiError.ValidationException;
 import co.edu.corhuila.amarantashop.sales.adapter.in.http.Rs256Verifier.Principal;
+import co.edu.corhuila.amarantashop.sales.application.port.in.ListMyOrders;
+import co.edu.corhuila.amarantashop.sales.application.port.in.MarkOrderAsPaid;
 import co.edu.corhuila.amarantashop.sales.application.port.in.PlaceOrder;
 import co.edu.corhuila.amarantashop.sales.application.port.in.PlaceOrder.PlaceOrderCommand;
 import co.edu.corhuila.amarantashop.sales.application.port.in.PlaceOrder.PlacedOrder;
@@ -15,10 +17,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -32,9 +37,13 @@ public class OrderController {
     static final String RECEPTIONIST = "RECEPTIONIST";
 
     private final PlaceOrder placeOrder;
+    private final MarkOrderAsPaid markOrderAsPaid;
+    private final ListMyOrders listMyOrders;
 
-    public OrderController(PlaceOrder placeOrder) {
+    public OrderController(PlaceOrder placeOrder, MarkOrderAsPaid markOrderAsPaid, ListMyOrders listMyOrders) {
         this.placeOrder = placeOrder;
+        this.markOrderAsPaid = markOrderAsPaid;
+        this.listMyOrders = listMyOrders;
     }
 
     /** Online checkout: a visitor with no token buys for the walk-in customer; a customer buys as themselves. */
@@ -55,6 +64,37 @@ public class OrderController {
             throw new ForbiddenException("this action requires the " + RECEPTIONIST + " role");
         }
         return checkout(key, body, WalkInCustomer.ID, callerId(caller), Channel.IN_STORE, true);
+    }
+
+    /** The receptionist confirms a payment. The lines, the contact data and the stock are not touched (CA-C5.3). */
+    @PostMapping("/{orderId}/mark-paid")
+    public OrderResponse markPaid(@PathVariable UUID orderId, HttpServletRequest http) {
+        Principal caller = caller(http);
+        if (caller == null || !RECEPTIONIST.equals(caller.role())) {
+            throw new ForbiddenException("this action requires the " + RECEPTIONIST + " role");
+        }
+        return OrderResponse.of(markOrderAsPaid.execute(orderId));
+    }
+
+    /** My orders only, newest first, one bounded page at a time (limit 1 to 100, 20 by default). */
+    @GetMapping
+    public PageResponse listMine(@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int limit,
+                                 HttpServletRequest http) {
+        Principal caller = caller(http);
+        if (caller == null) {
+            throw new ForbiddenException("this action requires a token");
+        }
+        List<FieldError> errors = new ArrayList<>();
+        if (page < 1) {
+            errors.add(new FieldError("page", "must be 1 or more"));
+        }
+        if (limit < 1 || limit > ListMyOrders.MAX_LIMIT) {
+            errors.add(new FieldError("limit", "must be between 1 and " + ListMyOrders.MAX_LIMIT));
+        }
+        if (!errors.isEmpty()) {
+            throw new ValidationException("the request has invalid fields", errors);
+        }
+        return PageResponse.of(listMyOrders.execute(callerId(caller), page, limit));
     }
 
     private ResponseEntity<OrderResponse> checkout(String key, CheckoutRequest body, UUID customer, UUID author,
