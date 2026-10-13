@@ -65,3 +65,26 @@ jobs:
       - uses: actions/checkout@v4
       - name: The container image builds
         run: docker build -f deploy/Dockerfile -t sales-api:ci .
+
+  # The two checks that need the schema of sales-db and a Docker daemon: the repository against a real PostgreSQL,
+  # and the service as a container with Catalog switched off. They run when the repository variable
+  # SALES_DB_CHECKOUT is "true", which the team sets once the organization lets this workflow read amaranta-shop-sales-db.
+  # Without it they do not run in CI, and scripts/integration-test.sh and scripts/smoke-test.sh run the same on a laptop.
+  with-the-database:
+    if: ${{ vars.SALES_DB_CHECKOUT == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: sales-api
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/amaranta-shop-sales-db
+          ref: develop
+          token: ${{ secrets.SALES_DB_READ_TOKEN || github.token }}
+          path: amaranta-shop-sales-db
+      - name: Repository against PostgreSQL, as sales_app
+        run: bash sales-api/scripts/integration-test.sh
+      - name: The service as a container, with Catalog down
+        run: bash sales-api/scripts/smoke-test.sh
