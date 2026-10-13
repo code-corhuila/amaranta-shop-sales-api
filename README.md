@@ -105,11 +105,13 @@ a named test, written before the code (TDD). A rule without a test is an intenti
 | RN-15 | one order per `Idempotency-Key`; the stock is reserved once | `PlaceOrderServiceTest.replaysTheSameOrderForTheSameKeyAndReservesOnce`, `releasesTheReservationOfARequestThatLostTheRaceForTheSameKey` |
 | CA-C3.3 | a rule that needs no Catalog data never calls Catalog | `PlaceOrderServiceTest.doesNotReserveWhenTheShopIsClosed`, `doesNotReserveForADuplicateLineABlankContactOrAnEmptyList` |
 | CA-C3.5 | only the event failing keeps the stock: the order exists | `PlaceOrderServiceTest.keepsTheReservationWhenOnlyPublishingTheEventFails` |
+| CA-C5 | mark as paid: only `PENDING`, unknown id is not found, lines untouched | `OrderQueriesTest.marksAPendingOrderAsPaidAndSavesIt`, `refusesToPayTwice`, `reportsAnOrderThatDoesNotExist` |
+| CA-C6 | my orders only, newest first, bounded pages | `OrderQueriesTest.listsMyOrdersOnlyAndNewestFirst`, `paginatesAndSaysHowManyPagesThereAre`, `refusesAPageOrALimitOutOfRange` |
 | RN-08, RN-13, RN-14 | stock through Catalog, data isolation, access | next pull requests (adapters) |
 
 ## Status
 
-The domain and the checkout are done and proven: 57 tests that run in seconds with no server and no database,
+The domain and the checkout are done and proven: 67 tests that run in seconds with no server and no database,
 Catalog and the repository replaced by doubles. Next, each its own pull request and each test-first:
-`feat/orders-queries-use-cases` (mark as paid, list my orders), `feat/http-error-envelope`, `feat/order-routes`,
+`feat/http-error-envelope`, `feat/order-routes`,
 `feat/jdbc-order-repository` and `feat/catalog-stock-adapter`.
