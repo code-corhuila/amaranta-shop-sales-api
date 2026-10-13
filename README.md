@@ -84,9 +84,28 @@ Every variable has a placeholder in `.env.example`; the real values never enter 
 | `CATALOG_API_URL` | the internal stock endpoints of Catalog |
 | `DB_POOL_MAX`, `DB_STATEMENT_TIMEOUT_MS` | pool size and time per statement, declared in the composition root |
 
+## The rules and the tests that prove them
+
+Each rule of the [spec](https://github.com/code-corhuila/amaranta-shop-docs/blob/main/specs/checkout.md) (section 4) is
+a named test, written before the code (TDD). A rule without a test is an intention, not a rule.
+
+| Rule | What it says | Test |
+|---|---|---|
+| RN-01 | the total is the sum of the lines | `OrderTest.totalEqualsTheSumOfTheLines` |
+| RN-02 | at least one line (`INV-ORDER-004`) | `OrderTest.rejectsAnOrderWithoutLines` |
+| RN-03 | a product once per order (`INV-ORDER-003`) | `OrderTest.rejectsTheSameProductTwice` |
+| RN-04 | a quantity from 1 to 50 (`INV-ORDER-ITEM-001`) | `OrderTest.rejectsAQuantityOutsideOneToFifty`, `OrderLineTest` |
+| RN-05 | contact name and phone, not blank (`INV-ORDER-006`) | `OrderTest.rejectsBlankContactData` |
+| RN-06 | a delivery needs an address, a pickup stores none (`INV-ORDER-007`) | `OrderTest.requiresAnAddressForDelivery`, `dropsTheAddressOnPickup` |
+| RN-07 | no order while the shop is closed, Bogota time (`INV-ORDER-008`) | `OrderTest.rejectsOrdersWhileTheShopIsClosed`, `ShopHoursTest` |
+| RN-10 | nothing changes after the order, except the payment | `OrderPaymentTest.hasNoMutatorExceptPay`, `theLinesOfAnOrderCannotBeChangedFromOutside` |
+| RN-11 | only a `PENDING` order can be paid (`INV-ORDER-005`) | `OrderPaymentTest.onlyAPendingOrderCanBePaid` |
+| RN-12 | a line keeps the name and price of the purchase | `OrderLineTest.keepsTheNameAndThePriceOfThePurchase` |
+| RN-08, RN-09, RN-13, RN-14, RN-15 | stock through Catalog, compensation, data isolation, access, idempotency | next pull requests |
+
 ## Status
 
-Skeleton: the three modules build, the jar is produced and the image builds. Next, each its own pull request and
-each test-first: `feat/order-domain` (the `Order` aggregate and its rules), `feat/place-order-use-case` (checkout
-with its compensation and its idempotency), `feat/http-error-envelope`, `feat/order-routes`,
-`feat/jdbc-order-repository` and `feat/catalog-stock-adapter`.
+The domain is done and proven: the `Order` aggregate with every rule that needs no Catalog data, 46 tests that
+run in seconds with no server and no database. Next, each its own pull request and each test-first:
+`feat/place-order-use-case` (checkout with its compensation and its idempotency), `feat/http-error-envelope`,
+`feat/order-routes`, `feat/jdbc-order-repository` and `feat/catalog-stock-adapter`.
