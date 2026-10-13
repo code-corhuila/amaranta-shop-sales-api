@@ -109,6 +109,23 @@ public final class Order {
                 delivery ? request.deliveryAddress().trim() : null);
     }
 
+    /** Rebuilds an order that already exists, as the repository read it. It validates nothing: it is history. */
+    public static Order reconstitute(UUID id, UUID customerId, UUID createdBy, Channel channel,
+                                     List<OrderLine> lines, OrderStatus status, Instant createdAt,
+                                     FulfillmentMethod fulfillmentMethod, PaymentMethod paymentMethod,
+                                     String contactName, String contactPhone, String deliveryAddress) {
+        return new Order(id, customerId, createdBy, channel, lines, status, createdAt, fulfillmentMethod,
+                paymentMethod, contactName, contactPhone, deliveryAddress);
+    }
+
+    /** INV-ORDER-005 (RN-11): only a PENDING order can become PAID. The one thing an order can do to itself. */
+    public void markAsPaid() {
+        if (status != OrderStatus.PENDING) {
+            throw new InvalidStatusTransition("INV-ORDER-005", "only a PENDING order can be marked as PAID");
+        }
+        status = OrderStatus.PAID;
+    }
+
     /** RN-01: the sum of the line subtotals. */
     public Money total() {
         return lines.stream().map(OrderLine::subtotal).reduce(Money.ZERO, Money::plus);
