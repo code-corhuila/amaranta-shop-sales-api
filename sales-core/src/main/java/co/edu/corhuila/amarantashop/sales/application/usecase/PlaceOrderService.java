@@ -10,6 +10,7 @@ import co.edu.corhuila.amarantashop.sales.application.port.out.StockLine;
 import co.edu.corhuila.amarantashop.sales.domain.model.Order;
 import co.edu.corhuila.amarantashop.sales.domain.model.OrderLine;
 import co.edu.corhuila.amarantashop.sales.domain.model.OrderRequest;
+import co.edu.corhuila.amarantashop.sales.domain.model.RequestedLine;
 import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
@@ -19,7 +20,9 @@ import java.util.Optional;
  * knows (spec DP-3), but it decides first everything that needs no Catalog data, so a closed shop never touches
  * the stock.
  *
- * <p>Once the order is saved its stock is spoken for, so a failing event does not release it.
+ * <p>What cannot be predicted, the save failing, is compensated, not made atomic across two services: the
+ * reservation is released once, never retried (RN-09). Once the order is saved its stock is spoken for, so a
+ * failing event does not release it.
  */
 public final class PlaceOrderService implements PlaceOrder {
 
@@ -55,16 +58,53 @@ public final class PlaceOrderService implements PlaceOrder {
 
         List<StockLine> reserved = stock.reserve(request.lines());
 
-        List<OrderLine> lines = reserved.stream()
-                .map(l -> new OrderLine(l.productId(), l.productName(), l.unitPrice(), l.quantity()))
-                .toList();
-        SaveResult saved = orders.saveNew(Order.place(ids.newId(), request, lines, clock), key);
+        SaveResult saved;
+        try {
+            List<OrderLine> lines = toOrderLines(request.lines(), reserved);
+            saved = orders.saveNew(Order.place(ids.newId(), request, lines, clock), key);
+        } catch (RuntimeException failure) {
+            releaseOnce(request.lines(), failure);
+            throw failure;
+        }
+
+        if (!saved.created()) { // lost the race for the same key: the winner stands, this stock goes back
+            try {
+                stock.release(request.lines());
+            } catch (RuntimeException releaseFailure) {
+                LOG.log(System.Logger.Level.ERROR, "could not release the reservation of a replayed request", releaseFailure);
+            }
+            return new PlacedOrder(saved.order(), true);
+        }
 
         try {
             events.orderCreated(saved.order());
         } catch (RuntimeException eventFailure) {
             LOG.log(System.Logger.Level.WARNING, "the order exists but its event was not published", eventFailure);
         }
-        return new PlacedOrder(saved.order(), !saved.created());
+        return new PlacedOrder(saved.order(), false);
+    }
+
+    /** Catalog must answer for exactly what was asked: the same products and the same quantities. */
+    private static List<OrderLine> toOrderLines(List<RequestedLine> asked, List<StockLine> reserved) {
+        if (reserved.size() != asked.size()) {
+            throw new IllegalStateException("Catalog answered " + reserved.size() + " lines for " + asked.size());
+        }
+        return asked.stream().map(want -> {
+            StockLine got = reserved.stream()
+                    .filter(l -> l.productId().equals(want.productId()) && l.quantity() == want.quantity())
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("Catalog did not answer for product " + want.productId()));
+            return new OrderLine(got.productId(), got.productName(), got.unitPrice(), got.quantity());
+        }).toList();
+    }
+
+    /** One attempt. If it fails the original error is what the caller sees, with this one attached to it. */
+    private void releaseOnce(List<RequestedLine> lines, RuntimeException original) {
+        try {
+            stock.release(lines);
+        } catch (RuntimeException releaseFailure) {
+            original.addSuppressed(releaseFailure);
+            LOG.log(System.Logger.Level.ERROR, "could not release the reservation: units stay reserved", releaseFailure);
+        }
     }
 }

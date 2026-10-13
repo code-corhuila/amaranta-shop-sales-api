@@ -31,6 +31,7 @@ final class Fakes {
         final List<List<RequestedLine>> reserved = new ArrayList<>();
         final List<List<RequestedLine>> released = new ArrayList<>();
         RuntimeException failOnReserve;
+        RuntimeException failOnRelease;
         private final Map<UUID, StockLine> catalog = new HashMap<>();
 
         Stock() {
@@ -60,6 +61,9 @@ final class Fakes {
         @Override
         public void release(List<RequestedLine> lines) {
             released.add(lines);
+            if (failOnRelease != null) {
+                throw failOnRelease;
+            }
         }
     }
 
@@ -67,14 +71,22 @@ final class Fakes {
     static final class Orders implements OrderRepository {
         final Map<UUID, Order> byId = new HashMap<>();
         final Map<String, UUID> byKey = new HashMap<>();
+        RuntimeException failOnSave;
+        Order winnerOfTheRace;
 
         @Override
         public Optional<Order> findByIdempotencyKey(String key) {
-            return Optional.ofNullable(byKey.get(key)).map(byId::get);
+            return winnerOfTheRace != null ? Optional.empty() : Optional.ofNullable(byKey.get(key)).map(byId::get);
         }
 
         @Override
         public SaveResult saveNew(Order order, String idempotencyKey) {
+            if (failOnSave != null) {
+                throw failOnSave;
+            }
+            if (winnerOfTheRace != null) {
+                return new SaveResult(winnerOfTheRace, false);
+            }
             if (byKey.containsKey(idempotencyKey)) {
                 return new SaveResult(byId.get(byKey.get(idempotencyKey)), false);
             }
