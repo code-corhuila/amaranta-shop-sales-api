@@ -27,6 +27,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,9 +76,17 @@ public class SalesConfiguration {
 
     // ---- the use cases ------------------------------------------------------------------------------------
 
+    /**
+     * The system clock. CLOCK_FIXED_AT exists only so a demo or a smoke test can run inside the shop hours at any
+     * time of day: it makes the service believe it is that instant, and it says so loudly. Never set it in production.
+     */
     @Bean
-    Clock clock() {
-        return Clock.systemUTC();
+    Clock clock(@Value("${sales.clock.fixed-at:}") String fixedAt) {
+        if (fixedAt.isBlank()) {
+            return Clock.systemUTC();
+        }
+        LOG.warn("CLOCK_FIXED_AT is set: the service believes it is {}. For demos and smoke tests, never for production", fixedAt);
+        return Clock.fixed(Instant.parse(fixedAt), ZoneOffset.UTC);
     }
 
     @Bean
