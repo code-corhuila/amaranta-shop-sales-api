@@ -3,6 +3,7 @@ package co.edu.corhuila.amarantashop.sales.application.usecase;
 import static co.edu.corhuila.amarantashop.sales.domain.model.OrderRequests.PRODUCT_A;
 import static co.edu.corhuila.amarantashop.sales.domain.model.OrderRequests.PRODUCT_B;
 
+import co.edu.corhuila.amarantashop.sales.application.port.in.ListMyOrders.OrderPage;
 import co.edu.corhuila.amarantashop.sales.application.port.out.IdGenerator;
 import co.edu.corhuila.amarantashop.sales.application.port.out.OrderEvents;
 import co.edu.corhuila.amarantashop.sales.application.port.out.OrderRepository;
@@ -14,6 +15,7 @@ import co.edu.corhuila.amarantashop.sales.domain.model.Money;
 import co.edu.corhuila.amarantashop.sales.domain.model.Order;
 import co.edu.corhuila.amarantashop.sales.domain.model.RequestedLine;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,6 +95,24 @@ final class Fakes {
             byId.put(order.id(), order);
             byKey.put(idempotencyKey, order.id());
             return new SaveResult(order, true);
+        }
+
+        @Override
+        public Optional<Order> findById(UUID id) {
+            return Optional.ofNullable(byId.get(id));
+        }
+
+        @Override
+        public void update(Order order) {
+            byId.put(order.id(), order);
+        }
+
+        @Override
+        public OrderPage findByCustomer(UUID customerId, int page, int limit) {
+            List<Order> mine = byId.values().stream().filter(o -> o.customerId().equals(customerId))
+                    .sorted(Comparator.comparing(Order::createdAt).reversed()).toList();
+            int from = Math.min((page - 1) * limit, mine.size());
+            return new OrderPage(mine.subList(from, Math.min(from + limit, mine.size())), page, limit, mine.size());
         }
     }
 
