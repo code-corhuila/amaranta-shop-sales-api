@@ -13,6 +13,7 @@ import co.edu.corhuila.amarantashop.sales.adapter.out.persistence.InMemoryOrderR
 import co.edu.corhuila.amarantashop.sales.application.port.out.CatalogUnavailableException;
 import co.edu.corhuila.amarantashop.sales.application.usecase.PlaceOrderService;
 import co.edu.corhuila.amarantashop.sales.domain.model.BusinessRuleViolation;
+import co.edu.corhuila.amarantashop.sales.domain.model.Channel;
 import co.edu.corhuila.amarantashop.sales.domain.model.Order;
 import co.edu.corhuila.amarantashop.sales.domain.model.WalkInCustomer;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,6 +33,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class PlaceOrderHttpTest {
 
     private static final String CUSTOMER = "11111111-1111-4111-8111-111111111111";
+    private static final String RECEPTIONIST = "33333333-3333-4333-8333-333333333333";
     private static final String DOG_FOOD = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     private static final String KEY = "idem-key-0001";
     private static final String VALID = """
@@ -193,6 +195,39 @@ class PlaceOrderHttpTest {
 
         send(place("/api/v1/orders", VALID).header("Idempotency-Key", KEY))
                 .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.error").value("SERVICE_UNAVAILABLE"));
+        assertThat(orders.all()).isEmpty();
+    }
+
+    // HU-C2: in store ---------------------------------------------------------------------------
+
+    @Test
+    void aReceptionistPlacesAnInStoreOrderAttributedToThem() throws Exception {
+        send(as(place("/api/v1/orders/in-store", VALID).header("Idempotency-Key", KEY), RECEPTIONIST, "RECEPTIONIST"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.channel").value("IN_STORE"));
+
+        assertThat(orders.all()).singleElement().satisfies(o -> {
+            assertThat(o.channel()).isEqualTo(Channel.IN_STORE);
+            assertThat(o.createdBy()).isEqualTo(UUID.fromString(RECEPTIONIST));
+            assertThat(o.customerId()).isEqualTo(WalkInCustomer.ID);
+        });
+    }
+
+    @Test
+    void aReceptionistMayNameTheCustomerOfTheSale() throws Exception {
+        String named = VALID.replace("{\"items\"", "{\"customerId\":\"" + CUSTOMER + "\",\"items\"");
+
+        send(as(place("/api/v1/orders/in-store", named).header("Idempotency-Key", KEY), RECEPTIONIST, "RECEPTIONIST"))
+                .andExpect(status().isCreated());
+
+        assertThat(orders.all()).singleElement().extracting(Order::customerId).isEqualTo(UUID.fromString(CUSTOMER));
+    }
+
+    @Test
+    void anyOtherRoleIs403BeforeAnyStockIsTouched() throws Exception {
+        send(as(place("/api/v1/orders/in-store", VALID).header("Idempotency-Key", KEY), CUSTOMER, "CUSTOMER"))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.error").value("FORBIDDEN"));
+
+        assertThat(stock.reserveCalls).isZero();
         assertThat(orders.all()).isEmpty();
     }
 }

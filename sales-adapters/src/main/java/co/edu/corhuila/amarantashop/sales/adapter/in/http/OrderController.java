@@ -29,6 +29,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/orders")
 public class OrderController {
 
+    static final String RECEPTIONIST = "RECEPTIONIST";
+
     private final PlaceOrder placeOrder;
 
     public OrderController(PlaceOrder placeOrder) {
@@ -42,6 +44,17 @@ public class OrderController {
         Principal caller = caller(http);
         UUID customer = caller == null ? WalkInCustomer.ID : callerId(caller);
         return checkout(key, body, customer, customer, Channel.ONLINE, false);
+    }
+
+    /** Counter checkout: the receptionist only, and the order is attributed to them as its author. */
+    @PostMapping("/in-store")
+    public ResponseEntity<OrderResponse> placeInStore(@RequestHeader(value = "Idempotency-Key", required = false) String key,
+                                                      @RequestBody CheckoutRequest body, HttpServletRequest http) {
+        Principal caller = caller(http);
+        if (caller == null || !RECEPTIONIST.equals(caller.role())) {
+            throw new ForbiddenException("this action requires the " + RECEPTIONIST + " role");
+        }
+        return checkout(key, body, WalkInCustomer.ID, callerId(caller), Channel.IN_STORE, true);
     }
 
     private ResponseEntity<OrderResponse> checkout(String key, CheckoutRequest body, UUID customer, UUID author,
