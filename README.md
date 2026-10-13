@@ -86,6 +86,7 @@ bash scripts/mvn.sh verify              # compile and test every module (149 tes
 bash scripts/mvn.sh -pl sales-core test # the core alone: no server, no database, a few seconds
 bash scripts/integration-test.sh        # the repository against a real PostgreSQL, as sales_app
 bash scripts/smoke-test.sh              # the container, a real database and a Catalog that is switched off
+bash scripts/e2e-with-catalog.sh        # THE RELEASE DEMO: sales-api and catalog-api together, with both real databases
 docker build -f deploy/Dockerfile -t sales-api .    # the container image
 ```
 
@@ -93,6 +94,12 @@ The last two need the `amaranta-shop-sales-db` repository next to this one (or `
 schema with its Flyway. The smoke test is the demo of the release in one command: a visitor buys, the order is in the
 database, a retry gives the same order, a receptionist marks it as paid, and **with Catalog down the checkout answers
 `503` and saves nothing**. In CI those two run when the repository variable `SALES_DB_CHECKOUT` is `true`.
+
+`e2e-with-catalog.sh` runs this service and `amaranta-shop-catalog-api` (Python, MongoDB) side by side, each with its own real
+database, and proves: the stock falls in MongoDB while the order, with the price of the purchase, lands in PostgreSQL; changing
+the product afterwards does not change the order; a retry takes the stock once; a rule of Catalog reaches the buyer; and the
+two failures that matter. **With the order's save made to fail after the stock was taken, the stock comes back (RN-09)**, and
+with Catalog down the checkout answers `503` and saves nothing. It needs `sales-db`, `catalog-db` and `catalog-api` next to this repository.
 
 ## Configuration
 
