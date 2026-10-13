@@ -23,6 +23,8 @@ sales:
     # The public key of amaranta-shop-security: inline as a .env stores it, or the path of a PEM file.
     public-key: ${JWT_PUBLIC_KEY:}
     public-key-file: ${JWT_PUBLIC_KEY_FILE:}
+  clock:
+    fixed-at: ${CLOCK_FIXED_AT:}   # demos and smoke tests only; empty in production
   catalog:
     # The internal stock endpoints of Catalog, never published through the gateway.
     url: ${CATALOG_API_URL:http://localhost:8082}
