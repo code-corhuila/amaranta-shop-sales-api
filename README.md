@@ -101,11 +101,15 @@ a named test, written before the code (TDD). A rule without a test is an intenti
 | RN-10 | nothing changes after the order, except the payment | `OrderPaymentTest.hasNoMutatorExceptPay`, `theLinesOfAnOrderCannotBeChangedFromOutside` |
 | RN-11 | only a `PENDING` order can be paid (`INV-ORDER-005`) | `OrderPaymentTest.onlyAPendingOrderCanBePaid` |
 | RN-12 | a line keeps the name and price of the purchase | `OrderLineTest.keepsTheNameAndThePriceOfThePurchase` |
-| RN-08, RN-09, RN-13, RN-14, RN-15 | stock through Catalog, compensation, data isolation, access, idempotency | next pull requests |
+| RN-09 | a rejected order gives its reservation back, once, never retried | `PlaceOrderServiceTest.releasesTheReservationWhenSavingFails`, `neverRetriesARelease_andTheOriginalErrorSurvives` |
+| RN-15 | one order per `Idempotency-Key`; the stock is reserved once | `PlaceOrderServiceTest.replaysTheSameOrderForTheSameKeyAndReservesOnce`, `releasesTheReservationOfARequestThatLostTheRaceForTheSameKey` |
+| CA-C3.3 | a rule that needs no Catalog data never calls Catalog | `PlaceOrderServiceTest.doesNotReserveWhenTheShopIsClosed`, `doesNotReserveForADuplicateLineABlankContactOrAnEmptyList` |
+| CA-C3.5 | only the event failing keeps the stock: the order exists | `PlaceOrderServiceTest.keepsTheReservationWhenOnlyPublishingTheEventFails` |
+| RN-08, RN-13, RN-14 | stock through Catalog, data isolation, access | next pull requests (adapters) |
 
 ## Status
 
-The domain is done and proven: the `Order` aggregate with every rule that needs no Catalog data, 46 tests that
-run in seconds with no server and no database. Next, each its own pull request and each test-first:
-`feat/place-order-use-case` (checkout with its compensation and its idempotency), `feat/http-error-envelope`,
-`feat/order-routes`, `feat/jdbc-order-repository` and `feat/catalog-stock-adapter`.
+The domain and the checkout are done and proven: 57 tests that run in seconds with no server and no database,
+Catalog and the repository replaced by doubles. Next, each its own pull request and each test-first:
+`feat/orders-queries-use-cases` (mark as paid, list my orders), `feat/http-error-envelope`, `feat/order-routes`,
+`feat/jdbc-order-repository` and `feat/catalog-stock-adapter`.
