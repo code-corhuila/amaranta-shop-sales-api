@@ -23,3 +23,95 @@ branch into another: `merge develop -> qa` and `merge qa -> main` do not exist i
 rule.
 
 Full policy: `00-governance/branching-policy.md` in `amaranta-shop-docs`.
+
+## Role in the system
+
+The service of the **sales** domain: place an order (online, with or without an account, and in store), mark
+an order as paid and list my orders. It owns the *data* of the `sales` schema and never the structure: the
+schema comes from `amaranta-shop-sales-db`, and this service never migrates it (norm 5.2.1). It is the
+first service extracted from the monolith ([spec](https://github.com/code-corhuila/amaranta-shop-docs/blob/main/specs/checkout.md)).
+
+## Depends on
+
+- `amaranta-shop-sales-db` on `amaranta-shop-infra-postgres`: the schema, and `sales_app`, the only user it
+  connects with (Annex J, J.4).
+- `amaranta-shop-catalog-api`: the stock of a product is reserved and released there, over two **internal**
+  HTTP endpoints that the gateway never publishes. Sales never reads or writes Catalog's database.
+- `amaranta-shop-security`: only its **public** key, to verify tokens. No service holds the private one.
+
+## Stack
+
+Java 21 and Spring Boot 3.5, in three Maven modules, from the teacher's `api-java` template
+([ADR-012](https://github.com/code-corhuila/amaranta-shop-docs/blob/main/05-architecture/decisions/records/ADR-012-stack-of-extracted-services.md)).
+Built with **TDD**: every rule of the spec (`RN-01` to `RN-15`) has a named test, written before the code that
+makes it pass. Built on **DDD**: the domain is the Order aggregate, in the language of the business. Specified
+first (**SDD**): the spec says what must be true, this repository proves it.
+
+## Layout and the rule that matters
+
+```
+sales-core/       the domain and the use cases. NO framework: a @Service, an @Entity or a servlet type does not compile
+sales-adapters/   everything that touches the outside: HTTP in; PostgreSQL and Catalog out
+sales-app/        the composition root: the only module that knows every concrete type and every limit
+deploy/           Dockerfile and compose.yml of this service only
+scripts/mvn.sh    Maven in Docker, so nothing is installed and the build is the same everywhere
+```
+
+The dependency arrows point **towards the domain**: `sales-app` -> `sales-adapters` -> `sales-core`. The core
+declares no framework in its `pom.xml` and CI fails if it imports one. A port is an interface in the core; an
+adapter implements it outside. The domain throws typed errors and does not know what a `422` is: the status is
+decided in one place in the HTTP adapter.
+
+## How to build and test
+
+You need only Docker.
+
+```bash
+bash scripts/mvn.sh verify              # compile and test every module
+bash scripts/mvn.sh -pl sales-core test # only the core: no server, no database, a few seconds
+docker build -f deploy/Dockerfile -t sales-api .    # the container image
+```
+
+## Configuration
+
+Every variable has a placeholder in `.env.example`; the real values never enter the repository.
+
+| Variable | What it is |
+|---|---|
+| `PORT` | HTTP port, 8080 |
+| `DATABASE_URL`, `DATABASE_USER`, `DATABASE_PASSWORD` | the PostgreSQL instance, as `sales_app` |
+| `JWT_PUBLIC_KEY` or `JWT_PUBLIC_KEY_FILE` | public key of `amaranta-shop-security` |
+| `CATALOG_API_URL` | the internal stock endpoints of Catalog |
+| `DB_POOL_MAX`, `DB_STATEMENT_TIMEOUT_MS` | pool size and time per statement, declared in the composition root |
+
+## The rules and the tests that prove them
+
+Each rule of the [spec](https://github.com/code-corhuila/amaranta-shop-docs/blob/main/specs/checkout.md) (section 4) is
+a named test, written before the code (TDD). A rule without a test is an intention, not a rule.
+
+| Rule | What it says | Test |
+|---|---|---|
+| RN-01 | the total is the sum of the lines | `OrderTest.totalEqualsTheSumOfTheLines` |
+| RN-02 | at least one line (`INV-ORDER-004`) | `OrderTest.rejectsAnOrderWithoutLines` |
+| RN-03 | a product once per order (`INV-ORDER-003`) | `OrderTest.rejectsTheSameProductTwice` |
+| RN-04 | a quantity from 1 to 50 (`INV-ORDER-ITEM-001`) | `OrderTest.rejectsAQuantityOutsideOneToFifty`, `OrderLineTest` |
+| RN-05 | contact name and phone, not blank (`INV-ORDER-006`) | `OrderTest.rejectsBlankContactData` |
+| RN-06 | a delivery needs an address, a pickup stores none (`INV-ORDER-007`) | `OrderTest.requiresAnAddressForDelivery`, `dropsTheAddressOnPickup` |
+| RN-07 | no order while the shop is closed, Bogota time (`INV-ORDER-008`) | `OrderTest.rejectsOrdersWhileTheShopIsClosed`, `ShopHoursTest` |
+| RN-10 | nothing changes after the order, except the payment | `OrderPaymentTest.hasNoMutatorExceptPay`, `theLinesOfAnOrderCannotBeChangedFromOutside` |
+| RN-11 | only a `PENDING` order can be paid (`INV-ORDER-005`) | `OrderPaymentTest.onlyAPendingOrderCanBePaid` |
+| RN-12 | a line keeps the name and price of the purchase | `OrderLineTest.keepsTheNameAndThePriceOfThePurchase` |
+| RN-09 | a rejected order gives its reservation back, once, never retried | `PlaceOrderServiceTest.releasesTheReservationWhenSavingFails`, `neverRetriesARelease_andTheOriginalErrorSurvives` |
+| RN-15 | one order per `Idempotency-Key`; the stock is reserved once | `PlaceOrderServiceTest.replaysTheSameOrderForTheSameKeyAndReservesOnce`, `releasesTheReservationOfARequestThatLostTheRaceForTheSameKey` |
+| CA-C3.3 | a rule that needs no Catalog data never calls Catalog | `PlaceOrderServiceTest.doesNotReserveWhenTheShopIsClosed`, `doesNotReserveForADuplicateLineABlankContactOrAnEmptyList` |
+| CA-C3.5 | only the event failing keeps the stock: the order exists | `PlaceOrderServiceTest.keepsTheReservationWhenOnlyPublishingTheEventFails` |
+| CA-C5 | mark as paid: only `PENDING`, unknown id is not found, lines untouched | `OrderQueriesTest.marksAPendingOrderAsPaidAndSavesIt`, `refusesToPayTwice`, `reportsAnOrderThatDoesNotExist` |
+| CA-C6 | my orders only, newest first, bounded pages | `OrderQueriesTest.listsMyOrdersOnlyAndNewestFirst`, `paginatesAndSaysHowManyPagesThereAre`, `refusesAPageOrALimitOutOfRange` |
+| RN-08, RN-13, RN-14 | stock through Catalog, data isolation, access | next pull requests (adapters) |
+
+## Status
+
+The domain and the checkout are done and proven: 67 tests that run in seconds with no server and no database,
+Catalog and the repository replaced by doubles. Next, each its own pull request and each test-first:
+`feat/http-error-envelope`, `feat/order-routes`,
+`feat/jdbc-order-repository` and `feat/catalog-stock-adapter`.
