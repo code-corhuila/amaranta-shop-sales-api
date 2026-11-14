@@ -1,0 +1,37 @@
+server:
+  port: ${PORT:8080}
+  shutdown: graceful            # stop accepting, let in-flight requests finish
+  tomcat:
+    connection-timeout: 5s      # time to receive the request line and headers
+    keep-alive-timeout: 60s
+    threads:
+      max: 200
+spring:
+  application:
+    name: sales-api
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  autoconfigure:
+    # The pool is built in the composition root, not by auto-configuration.
+    exclude: org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+logging:
+  structured:
+    format:
+      console: ecs              # one JSON object per line; the MDC adds the correlation id
+sales:
+  jwt:
+    # The public key of amaranta-shop-security: inline as a .env stores it, or the path of a PEM file.
+    public-key: ${JWT_PUBLIC_KEY:}
+    public-key-file: ${JWT_PUBLIC_KEY_FILE:}
+  clock:
+    fixed-at: ${CLOCK_FIXED_AT:}   # demos and smoke tests only; empty in production
+  catalog:
+    # The internal stock endpoints of Catalog, never published through the gateway.
+    url: ${CATALOG_API_URL:http://localhost:8082}
+  database:
+    # The schema lives in amaranta-shop-sales-db; this service never migrates it.
+    url: ${DATABASE_URL:}
+    user: ${DATABASE_USER:}
+    password: ${DATABASE_PASSWORD:}
+    pool-max: ${DB_POOL_MAX:10}
+    statement-timeout-ms: ${DB_STATEMENT_TIMEOUT_MS:5000}
