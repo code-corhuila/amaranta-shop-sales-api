@@ -1,7 +1,6 @@
 package co.edu.corhuila.amarantashop.sales.adapter.out.persistence;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -66,18 +65,8 @@ public final class JdbcOutboxPublisher {
     }
 
     private String message(Row row) throws JsonProcessingException {
-        JsonNode payload = json.readTree(row.payloadJson());
-        JsonNode metadata = json.readTree(row.metadataJson());
-        var envelope = json.createObjectNode();
-        envelope.put("eventId", row.id().toString());
-        envelope.put("eventType", row.eventType());
-        envelope.put("aggregateId", row.aggregateId().toString());
-        envelope.put("aggregateType", row.aggregateType());
-        envelope.put("occurredAt", row.createdAt().toInstant().toString());
-        envelope.put("version", 1);
-        envelope.set("payload", payload);
-        envelope.set("metadata", metadata);
-        return json.writeValueAsString(envelope);
+        return OutboxMessageJson.envelope(json, row.id(), row.eventType(), row.aggregateType(), row.aggregateId(),
+                row.payloadJson(), row.metadataJson(), row.createdAt());
     }
 
     private static Row row(ResultSet rs) throws SQLException {
