@@ -16,6 +16,11 @@ services:
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?set JWT_PUBLIC_KEY, the public key of amaranta-shop-security}
       CATALOG_API_URL: ${CATALOG_API_URL:-http://catalog-api:8082}
       DB_POOL_MAX: "10"
+      SALES_OUTBOX_PUBLISHER_ENABLED: ${SALES_OUTBOX_PUBLISHER_ENABLED:-false}
+      SALES_OUTBOX_PUBLISHER_EXCHANGE: ${SALES_OUTBOX_PUBLISHER_EXCHANGE:-sales.events}
+      SALES_OUTBOX_PUBLISHER_BATCH_SIZE: ${SALES_OUTBOX_PUBLISHER_BATCH_SIZE:-20}
+      SPRING_RABBITMQ_HOST: ${SPRING_RABBITMQ_HOST:-rabbitmq}
+      SPRING_RABBITMQ_PORT: ${SPRING_RABBITMQ_PORT:-5672}
     # expose, not ports: only the gateway is reachable from the host.
     expose: ["8080"]
     networks: [platform]
