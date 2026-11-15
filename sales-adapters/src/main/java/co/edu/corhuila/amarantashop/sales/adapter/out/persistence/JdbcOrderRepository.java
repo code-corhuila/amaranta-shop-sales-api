@@ -20,21 +20,25 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import javax.sql.DataSource;
+import org.slf4j.MDC;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * The orders of the schema {@code sales}, written for the tables of amaranta-shop-sales-db. It connects as
- * {@code sales_app} and never migrates anything (norm 5.2.1). The order, its lines and its idempotency key are
- * written in ONE transaction, so a failure leaves none of the three (RN-15).
+ * {@code sales_app} and never migrates anything (norm 5.2.1). The order, its lines, idempotency key and the
+ * durable OrderCreated outbox record are written in ONE transaction. A broker can be unavailable afterwards,
+ * but it cannot make an already-created order lose its integration event (RN-15).
  */
 public class JdbcOrderRepository implements OrderRepository {
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transaction;
+    private final DataSource dataSource;
 
     public JdbcOrderRepository(DataSource dataSource) {
+        this.dataSource = dataSource;
         this.jdbc = new JdbcTemplate(dataSource);
         this.transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     }
@@ -50,6 +54,7 @@ public class JdbcOrderRepository implements OrderRepository {
         Boolean created = transaction.execute(status -> {
             insertOrder(order);
             insertLines(order);
+            insertOrderCreatedOutboxEvent(order);
             int keyed = jdbc.update("INSERT INTO sales.idempotency_key (key, order_id) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
                     idempotencyKey, order.id());
             if (keyed == 0) {
@@ -108,8 +113,46 @@ public class JdbcOrderRepository implements OrderRepository {
         });
     }
 
+    /**
+     * This is deliberately part of the same transaction as {@link #insertOrder(Order)}. The payload is a small,
+     * versionable business payload: consumers receive immutable identifiers and totals, not the Sales aggregate or its
+     * database rows. The publisher later adds the standard envelope from the immutable event columns and metadata;
+     * it is not allowed to rewrite this payload.
+     */
+    private void insertOrderCreatedOutboxEvent(Order o) {
+        UUID eventId = UUID.randomUUID();
+        String correlationId = MDC.get("correlationId");
+        if (correlationId == null || correlationId.isBlank()) {
+            correlationId = eventId.toString(); // a message born outside HTTP still has a trace root
+        }
+        jdbc.update("""
+                INSERT INTO sales.outbox_messages
+                    (id, event_type, aggregate_type, aggregate_id, topic, payload_json, metadata_json, created_at)
+                VALUES (?, 'OrderCreated', 'Order', ?, 'sales.order.created', jsonb_build_object(
+                        'customerId', ?::text,
+                        'channel', ?,
+                        'items', (SELECT jsonb_agg(jsonb_build_object(
+                            'productId', product_id::text, 'quantity', quantity)
+                            ORDER BY product_name, product_id)
+                                  FROM sales.order_items WHERE order_id = ?),
+                        'totalCOP', ?
+                    ),
+                    jsonb_build_object(
+                        'correlationId', ?,
+                        'causationId', NULL,
+                        'userId', ?::text
+                    ), ?)""",
+                eventId, o.id(), o.customerId(), o.channel().name(), o.id(), Math.toIntExact(o.total().amount()),
+                correlationId, o.createdBy(), utc(o));
+    }
+
     private static OffsetDateTime utc(Order o) {
         return o.createdAt().atOffset(ZoneOffset.UTC);
+    }
+
+    /** The outbox publisher uses the same domain-owned datasource and transaction manager as this repository. */
+    public DataSource dataSource() {
+        return dataSource;
     }
 
     /** The lines of several orders in one query, in a stable order (the schema keeps no line number). */

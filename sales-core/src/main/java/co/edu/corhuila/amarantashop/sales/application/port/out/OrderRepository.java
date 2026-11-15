@@ -10,9 +10,10 @@ public interface OrderRepository {
     Optional<Order> findByIdempotencyKey(String idempotencyKey);
 
     /**
-     * Saves the order and its idempotency key in ONE transaction (RN-15). If the key already exists the new order
-     * is discarded and the original is returned with {@code created = false}: two identical requests racing each
-     * other cannot both create an order.
+     * Saves the order, its idempotency key and the durable {@code OrderCreated} outbox record in ONE local
+     * transaction (RN-15). If the key already exists the new order and event are discarded and the original is
+     * returned with {@code created = false}: two identical requests racing each other cannot create two orders or
+     * two integration events.
      */
     SaveResult saveNew(Order order, String idempotencyKey);
 
