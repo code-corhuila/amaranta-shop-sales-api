@@ -2,7 +2,7 @@ package co.edu.corhuila.amarantashop.sales.application.port.out;
 
 import co.edu.corhuila.amarantashop.sales.domain.model.Order;
 
-/** The announcement that an order exists. Today a log line; the broker arrives with the worker (spec section 6). */
+/** An optional in-process observer. Cross-service delivery is durable in the Sales outbox, never this callback. */
 public interface OrderEvents {
 
     void orderCreated(Order order);

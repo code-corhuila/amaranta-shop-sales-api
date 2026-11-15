@@ -94,7 +94,7 @@ public class SalesConfiguration {
         return UUID::randomUUID;
     }
 
-    /** The announcement that an order exists is a log line today; the broker arrives with the worker. */
+    /** A local diagnostic observer; the durable cross-service record is inserted by the PostgreSQL repository. */
     @Bean
     OrderEvents orderEvents() {
         Logger events = LoggerFactory.getLogger("events");

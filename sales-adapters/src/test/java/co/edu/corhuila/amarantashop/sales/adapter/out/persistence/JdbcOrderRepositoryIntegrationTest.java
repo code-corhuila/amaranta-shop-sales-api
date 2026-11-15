@@ -23,6 +23,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import javax.sql.DataSource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -74,6 +75,26 @@ class JdbcOrderRepositoryIntegrationTest extends OrderRepositoryContract {
 
         assertThat(repository.findById(tooLongForTheColumn.id())).isEmpty();
         assertThat(repository.findByIdempotencyKey("atomic-key-0001")).isEmpty();
+    }
+
+    @Test
+    void commitsOneImmutableOrderCreatedOutboxRecordWithTheOrder() {
+        Order order = order(90, CUSTOMER, 12);
+
+        SaveResult saved = repository.saveNew(order, "outbox-key-0001");
+        var row = new JdbcTemplate(asService).queryForMap("""
+                SELECT aggregate_id, event_type, payload ->> 'orderId' AS payload_order_id,
+                       payload ->> 'customerId' AS payload_customer_id, payload ->> 'totalAmount' AS payload_total,
+                       published_at, attempts
+                FROM sales.outbox_event WHERE aggregate_id = ?""", order.id());
+
+        assertThat(saved.created()).isTrue();
+        assertThat(row).containsEntry("event_type", "OrderCreated")
+                .containsEntry("payload_order_id", order.id().toString())
+                .containsEntry("payload_customer_id", CUSTOMER.toString())
+                .containsEntry("payload_total", "90000")
+                .containsEntry("attempts", 0);
+        assertThat(row.get("published_at")).isNull();
     }
 
     @Test
