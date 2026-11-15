@@ -9,6 +9,7 @@ import co.edu.corhuila.amarantashop.sales.adapter.in.http.Rs256Verifier;
 import co.edu.corhuila.amarantashop.sales.adapter.out.catalog.CatalogStockHttpAdapter;
 import co.edu.corhuila.amarantashop.sales.adapter.out.persistence.InMemoryOrderRepository;
 import co.edu.corhuila.amarantashop.sales.adapter.out.persistence.JdbcOrderRepository;
+import co.edu.corhuila.amarantashop.sales.adapter.out.persistence.JdbcOutboxPublisher;
 import co.edu.corhuila.amarantashop.sales.application.port.in.ListMyOrders;
 import co.edu.corhuila.amarantashop.sales.application.port.in.MarkOrderAsPaid;
 import co.edu.corhuila.amarantashop.sales.application.port.in.PlaceOrder;
@@ -33,6 +34,8 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -69,6 +72,30 @@ public class SalesConfiguration {
         return new JdbcOrderRepository(new HikariDataSource(pool));
     }
 
+    /**
+     * The publisher is opt-in: no local HTTP test or developer run contacts RabbitMQ accidentally. In an integrated
+     * environment it shares the Sales datasource with the order repository, so delivery progress is domain-owned.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "sales.outbox.publisher", name = "enabled", havingValue = "true")
+    JdbcOutboxPublisher outboxPublisher(OrderRepository orders, RabbitTemplate rabbit, ObjectMapper json,
+                                        @Value("${sales.outbox.publisher.exchange:sales.events}") String exchange) {
+        if (!(orders instanceof JdbcOrderRepository jdbcOrders)) {
+            throw new IllegalStateException("an enabled outbox publisher requires DATABASE_URL");
+        }
+        return new JdbcOutboxPublisher(jdbcOrders.dataSource(), rabbit, json, exchange);
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "sales.outbox.publisher", name = "enabled", havingValue = "true")
+    ScheduledOutboxPublisher scheduledOutboxPublisher(JdbcOutboxPublisher publisher,
+                                                       @Value("${sales.outbox.publisher.batch-size:20}") int batchSize) {
+        if (batchSize < 1 || batchSize > 100) {
+            throw new IllegalArgumentException("sales.outbox.publisher.batch-size must be between 1 and 100");
+        }
+        return new ScheduledOutboxPublisher(publisher, batchSize);
+    }
+
     @Bean
     ProductStock productStock(@Value("${sales.catalog.url}") String catalogUrl) {
         return new CatalogStockHttpAdapter(catalogUrl, Duration.ofSeconds(2), Duration.ofSeconds(3));
@@ -94,7 +121,7 @@ public class SalesConfiguration {
         return UUID::randomUUID;
     }
 
-    /** The announcement that an order exists is a log line today; the broker arrives with the worker. */
+    /** A local diagnostic observer; the durable cross-service record is inserted by the PostgreSQL repository. */
     @Bean
     OrderEvents orderEvents() {
         Logger events = LoggerFactory.getLogger("events");
