@@ -84,8 +84,10 @@ class JdbcOrderRepositoryIntegrationTest extends OrderRepositoryContract {
 
         SaveResult saved = repository.saveNew(order, "outbox-key-0001");
         var row = new JdbcTemplate(asService).queryForMap("""
-                SELECT aggregate_id, event_type, payload ->> 'orderId' AS payload_order_id,
-                       payload ->> 'customerId' AS payload_customer_id, payload ->> 'totalAmount' AS payload_total,
+                SELECT aggregate_id, event_type, payload ->> 'aggregateId' AS payload_order_id,
+                       payload -> 'payload' ->> 'customerId' AS payload_customer_id,
+                       payload -> 'payload' ->> 'totalCOP' AS payload_total,
+                       payload ->> 'aggregateType' AS aggregate_type, payload ->> 'version' AS payload_version,
                        published_at, attempts
                 FROM sales.outbox_event WHERE aggregate_id = ?""", order.id());
 
@@ -94,6 +96,8 @@ class JdbcOrderRepositoryIntegrationTest extends OrderRepositoryContract {
                 .containsEntry("payload_order_id", order.id().toString())
                 .containsEntry("payload_customer_id", CUSTOMER.toString())
                 .containsEntry("payload_total", "90000")
+                .containsEntry("aggregate_type", "Order")
+                .containsEntry("payload_version", "1")
                 .containsEntry("attempts", 0);
         assertThat(row.get("published_at")).isNull();
     }

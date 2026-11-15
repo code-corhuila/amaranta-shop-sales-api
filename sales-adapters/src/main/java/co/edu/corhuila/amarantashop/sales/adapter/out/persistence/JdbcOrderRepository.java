@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import javax.sql.DataSource;
+import org.slf4j.MDC;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -117,18 +118,36 @@ public class JdbcOrderRepository implements OrderRepository {
      */
     private void insertOrderCreatedOutboxEvent(Order o) {
         UUID eventId = UUID.randomUUID();
+        String correlationId = MDC.get("correlationId");
+        if (correlationId == null || correlationId.isBlank()) {
+            correlationId = eventId.toString(); // a message born outside HTTP still has a trace root
+        }
         jdbc.update("""
                 INSERT INTO sales.outbox_event (event_id, aggregate_id, event_type, payload, occurred_at)
                 VALUES (?, ?, 'OrderCreated', jsonb_build_object(
                     'eventId', ?::text,
                     'eventType', 'OrderCreated',
-                    'orderId', ?::text,
-                    'customerId', ?::text,
-                    'totalAmount', ?,
-                    'occurredAt', ?::text
+                    'aggregateId', ?::text,
+                    'aggregateType', 'Order',
+                    'occurredAt', ?::text,
+                    'version', 1,
+                    'payload', jsonb_build_object(
+                        'customerId', ?::text,
+                        'channel', ?,
+                        'items', (SELECT jsonb_agg(jsonb_build_object(
+                            'productId', product_id::text, 'quantity', quantity)
+                            ORDER BY product_name, product_id)
+                                  FROM sales.order_items WHERE order_id = ?),
+                        'totalCOP', ?
+                    ),
+                    'metadata', jsonb_build_object(
+                        'correlationId', ?,
+                        'causationId', NULL,
+                        'userId', ?::text
+                    )
                 ), ?)""",
-                eventId, o.id(), eventId, o.id(), o.customerId(), Math.toIntExact(o.total().amount()),
-                o.createdAt().toString(), utc(o));
+                eventId, o.id(), eventId, o.id(), o.createdAt().toString(), o.customerId(), o.channel().name(),
+                o.id(), Math.toIntExact(o.total().amount()), correlationId, o.createdBy(), utc(o));
     }
 
     private static OffsetDateTime utc(Order o) {
