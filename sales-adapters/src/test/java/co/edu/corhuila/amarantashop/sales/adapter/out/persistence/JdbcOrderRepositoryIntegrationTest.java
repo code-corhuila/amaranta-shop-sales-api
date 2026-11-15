@@ -75,6 +75,7 @@ class JdbcOrderRepositoryIntegrationTest extends OrderRepositoryContract {
 
         assertThat(repository.findById(tooLongForTheColumn.id())).isEmpty();
         assertThat(repository.findByIdempotencyKey("atomic-key-0001")).isEmpty();
+        assertThat(new JdbcTemplate(asService).queryForObject("SELECT count(*) FROM sales.outbox_event", Long.class)).isZero();
     }
 
     @Test
@@ -120,6 +121,8 @@ class JdbcOrderRepositoryIntegrationTest extends OrderRepositoryContract {
 
             assertThat(created).isEqualTo(1);
             assertThat(repository.findByCustomer(CUSTOMER, 1, 100).total()).isEqualTo(1);
+            assertThat(new JdbcTemplate(asService).queryForObject("SELECT count(*) FROM sales.outbox_event", Long.class))
+                    .isEqualTo(1); // the idempotency loser was rolled back with its event as well
         } finally {
             pool.shutdownNow();
         }
