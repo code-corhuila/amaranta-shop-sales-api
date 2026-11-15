@@ -26,8 +26,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * The orders of the schema {@code sales}, written for the tables of amaranta-shop-sales-db. It connects as
- * {@code sales_app} and never migrates anything (norm 5.2.1). The order, its lines and its idempotency key are
- * written in ONE transaction, so a failure leaves none of the three (RN-15).
+ * {@code sales_app} and never migrates anything (norm 5.2.1). The order, its lines, idempotency key and the
+ * durable OrderCreated outbox record are written in ONE transaction. A broker can be unavailable afterwards,
+ * but it cannot make an already-created order lose its integration event (RN-15).
  */
 public class JdbcOrderRepository implements OrderRepository {
 
@@ -50,6 +51,7 @@ public class JdbcOrderRepository implements OrderRepository {
         Boolean created = transaction.execute(status -> {
             insertOrder(order);
             insertLines(order);
+            insertOrderCreatedOutboxEvent(order);
             int keyed = jdbc.update("INSERT INTO sales.idempotency_key (key, order_id) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
                     idempotencyKey, order.id());
             if (keyed == 0) {
@@ -106,6 +108,27 @@ public class JdbcOrderRepository implements OrderRepository {
             ps.setInt(5, line.quantity());
             ps.setInt(6, Math.toIntExact(line.subtotal().amount()));
         });
+    }
+
+    /**
+     * This is deliberately part of the same transaction as {@link #insertOrder(Order)}. The payload is a small,
+     * versionable integration contract: consumers receive immutable identifiers and totals, not the Sales aggregate
+     * or its database rows. The publisher claims this row later; it is not allowed to rewrite this payload.
+     */
+    private void insertOrderCreatedOutboxEvent(Order o) {
+        UUID eventId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO sales.outbox_event (event_id, aggregate_id, event_type, payload, occurred_at)
+                VALUES (?, ?, 'OrderCreated', jsonb_build_object(
+                    'eventId', ?::text,
+                    'eventType', 'OrderCreated',
+                    'orderId', ?::text,
+                    'customerId', ?::text,
+                    'totalAmount', ?,
+                    'occurredAt', ?::text
+                ), ?)""",
+                eventId, o.id(), eventId, o.id(), o.customerId(), Math.toIntExact(o.total().amount()),
+                o.createdAt().toString(), utc(o));
     }
 
     private static OffsetDateTime utc(Order o) {
