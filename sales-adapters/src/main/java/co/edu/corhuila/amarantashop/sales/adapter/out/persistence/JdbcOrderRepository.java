@@ -113,8 +113,9 @@ public class JdbcOrderRepository implements OrderRepository {
 
     /**
      * This is deliberately part of the same transaction as {@link #insertOrder(Order)}. The payload is a small,
-     * versionable integration contract: consumers receive immutable identifiers and totals, not the Sales aggregate
-     * or its database rows. The publisher claims this row later; it is not allowed to rewrite this payload.
+     * versionable business payload: consumers receive immutable identifiers and totals, not the Sales aggregate or its
+     * database rows. The publisher later adds the standard envelope from the immutable event columns and metadata;
+     * it is not allowed to rewrite this payload.
      */
     private void insertOrderCreatedOutboxEvent(Order o) {
         UUID eventId = UUID.randomUUID();
@@ -123,15 +124,9 @@ public class JdbcOrderRepository implements OrderRepository {
             correlationId = eventId.toString(); // a message born outside HTTP still has a trace root
         }
         jdbc.update("""
-                INSERT INTO sales.outbox_event (event_id, aggregate_id, event_type, payload, occurred_at)
-                VALUES (?, ?, 'OrderCreated', jsonb_build_object(
-                    'eventId', ?::text,
-                    'eventType', 'OrderCreated',
-                    'aggregateId', ?::text,
-                    'aggregateType', 'Order',
-                    'occurredAt', ?::text,
-                    'version', 1,
-                    'payload', jsonb_build_object(
+                INSERT INTO sales.outbox_messages
+                    (id, event_type, aggregate_type, aggregate_id, topic, payload_json, metadata_json, created_at)
+                VALUES (?, 'OrderCreated', 'Order', ?, 'sales.order.created', jsonb_build_object(
                         'customerId', ?::text,
                         'channel', ?,
                         'items', (SELECT jsonb_agg(jsonb_build_object(
@@ -140,14 +135,13 @@ public class JdbcOrderRepository implements OrderRepository {
                                   FROM sales.order_items WHERE order_id = ?),
                         'totalCOP', ?
                     ),
-                    'metadata', jsonb_build_object(
+                    jsonb_build_object(
                         'correlationId', ?,
                         'causationId', NULL,
                         'userId', ?::text
-                    )
-                ), ?)""",
-                eventId, o.id(), eventId, o.id(), o.createdAt().toString(), o.customerId(), o.channel().name(),
-                o.id(), Math.toIntExact(o.total().amount()), correlationId, o.createdBy(), utc(o));
+                    ), ?)""",
+                eventId, o.id(), o.customerId(), o.channel().name(), o.id(), Math.toIntExact(o.total().amount()),
+                correlationId, o.createdBy(), utc(o));
     }
 
     private static OffsetDateTime utc(Order o) {
