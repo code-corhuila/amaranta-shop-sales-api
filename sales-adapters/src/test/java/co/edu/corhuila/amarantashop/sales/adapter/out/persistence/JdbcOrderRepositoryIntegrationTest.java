@@ -75,7 +75,7 @@ class JdbcOrderRepositoryIntegrationTest extends OrderRepositoryContract {
 
         assertThat(repository.findById(tooLongForTheColumn.id())).isEmpty();
         assertThat(repository.findByIdempotencyKey("atomic-key-0001")).isEmpty();
-        assertThat(new JdbcTemplate(asService).queryForObject("SELECT count(*) FROM sales.outbox_event", Long.class)).isZero();
+        assertThat(new JdbcTemplate(asService).queryForObject("SELECT count(*) FROM sales.outbox_messages", Long.class)).isZero();
     }
 
     @Test
@@ -84,20 +84,18 @@ class JdbcOrderRepositoryIntegrationTest extends OrderRepositoryContract {
 
         SaveResult saved = repository.saveNew(order, "outbox-key-0001");
         var row = new JdbcTemplate(asService).queryForMap("""
-                SELECT aggregate_id, event_type, payload ->> 'aggregateId' AS payload_order_id,
-                       payload -> 'payload' ->> 'customerId' AS payload_customer_id,
-                       payload -> 'payload' ->> 'totalCOP' AS payload_total,
-                       payload ->> 'aggregateType' AS aggregate_type, payload ->> 'version' AS payload_version,
-                       published_at, attempts
-                FROM sales.outbox_event WHERE aggregate_id = ?""", order.id());
+                SELECT aggregate_id, event_type, aggregate_type, topic,
+                       payload_json ->> 'customerId' AS payload_customer_id,
+                       payload_json ->> 'totalCOP' AS payload_total, status, published_at, attempts
+                FROM sales.outbox_messages WHERE aggregate_id = ?""", order.id());
 
         assertThat(saved.created()).isTrue();
         assertThat(row).containsEntry("event_type", "OrderCreated")
-                .containsEntry("payload_order_id", order.id().toString())
                 .containsEntry("payload_customer_id", CUSTOMER.toString())
                 .containsEntry("payload_total", "90000")
                 .containsEntry("aggregate_type", "Order")
-                .containsEntry("payload_version", "1")
+                .containsEntry("topic", "sales.order.created")
+                .containsEntry("status", "PENDING")
                 .containsEntry("attempts", 0);
         assertThat(row.get("published_at")).isNull();
     }
@@ -125,7 +123,7 @@ class JdbcOrderRepositoryIntegrationTest extends OrderRepositoryContract {
 
             assertThat(created).isEqualTo(1);
             assertThat(repository.findByCustomer(CUSTOMER, 1, 100).total()).isEqualTo(1);
-            assertThat(new JdbcTemplate(asService).queryForObject("SELECT count(*) FROM sales.outbox_event", Long.class))
+            assertThat(new JdbcTemplate(asService).queryForObject("SELECT count(*) FROM sales.outbox_messages", Long.class))
                     .isEqualTo(1); // the idempotency loser was rolled back with its event as well
         } finally {
             pool.shutdownNow();
