@@ -35,8 +35,10 @@ public class JdbcOrderRepository implements OrderRepository {
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transaction;
+    private final DataSource dataSource;
 
     public JdbcOrderRepository(DataSource dataSource) {
+        this.dataSource = dataSource;
         this.jdbc = new JdbcTemplate(dataSource);
         this.transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     }
@@ -146,6 +148,11 @@ public class JdbcOrderRepository implements OrderRepository {
 
     private static OffsetDateTime utc(Order o) {
         return o.createdAt().atOffset(ZoneOffset.UTC);
+    }
+
+    /** The outbox publisher uses the same domain-owned datasource and transaction manager as this repository. */
+    public DataSource dataSource() {
+        return dataSource;
     }
 
     /** The lines of several orders in one query, in a stable order (the schema keeps no line number). */
