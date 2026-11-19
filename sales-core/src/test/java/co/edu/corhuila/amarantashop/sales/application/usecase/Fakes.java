@@ -114,6 +114,13 @@ final class Fakes {
             int from = Math.min((page - 1) * limit, mine.size());
             return new OrderPage(mine.subList(from, Math.min(from + limit, mine.size())), page, limit, mine.size());
         }
+
+        @Override
+        public OrderPage findAll(int page, int limit) {
+            List<Order> all = byId.values().stream().sorted(Comparator.comparing(Order::createdAt).reversed()).toList();
+            int from = Math.min((page - 1) * limit, all.size());
+            return new OrderPage(all.subList(from, Math.min(from + limit, all.size())), page, limit, all.size());
+        }
     }
 
     static final class Events implements OrderEvents {

@@ -1,5 +1,6 @@
 package co.edu.corhuila.amarantashop.sales.app;
 
+import co.edu.corhuila.amarantashop.sales.adapter.in.http.AdminOrderController;
 import co.edu.corhuila.amarantashop.sales.adapter.in.http.AuthFilter;
 import co.edu.corhuila.amarantashop.sales.adapter.in.http.CorrelationFilter;
 import co.edu.corhuila.amarantashop.sales.adapter.in.http.ErrorHandler;
@@ -10,6 +11,7 @@ import co.edu.corhuila.amarantashop.sales.adapter.out.catalog.CatalogStockHttpAd
 import co.edu.corhuila.amarantashop.sales.adapter.out.persistence.InMemoryOrderRepository;
 import co.edu.corhuila.amarantashop.sales.adapter.out.persistence.JdbcOrderRepository;
 import co.edu.corhuila.amarantashop.sales.adapter.out.persistence.JdbcOutboxPublisher;
+import co.edu.corhuila.amarantashop.sales.application.port.in.ListAllOrders;
 import co.edu.corhuila.amarantashop.sales.application.port.in.ListMyOrders;
 import co.edu.corhuila.amarantashop.sales.application.port.in.MarkOrderAsPaid;
 import co.edu.corhuila.amarantashop.sales.application.port.in.PlaceOrder;
@@ -17,6 +19,7 @@ import co.edu.corhuila.amarantashop.sales.application.port.out.IdGenerator;
 import co.edu.corhuila.amarantashop.sales.application.port.out.OrderEvents;
 import co.edu.corhuila.amarantashop.sales.application.port.out.OrderRepository;
 import co.edu.corhuila.amarantashop.sales.application.port.out.ProductStock;
+import co.edu.corhuila.amarantashop.sales.application.usecase.ListAllOrdersService;
 import co.edu.corhuila.amarantashop.sales.application.usecase.ListMyOrdersService;
 import co.edu.corhuila.amarantashop.sales.application.usecase.MarkOrderAsPaidService;
 import co.edu.corhuila.amarantashop.sales.application.usecase.PlaceOrderService;
@@ -143,11 +146,21 @@ public class SalesConfiguration {
         return new ListMyOrdersService(orders);
     }
 
+    @Bean
+    ListAllOrders listAllOrders(OrderRepository orders) {
+        return new ListAllOrdersService(orders);
+    }
+
     // ---- HTTP in: the routes, the error handler and the two filters ---------------------------------------
 
     @Bean
     OrderController orderController(PlaceOrder place, MarkOrderAsPaid markPaid, ListMyOrders list) {
         return new OrderController(place, markPaid, list);
+    }
+
+    @Bean
+    AdminOrderController adminOrderController(ListAllOrders list) {
+        return new AdminOrderController(list);
     }
 
     @Bean
