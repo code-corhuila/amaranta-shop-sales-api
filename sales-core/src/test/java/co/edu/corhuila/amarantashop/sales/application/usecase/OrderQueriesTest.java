@@ -27,12 +27,14 @@ class OrderQueriesTest {
     private Fakes.Orders orders;
     private MarkOrderAsPaidService markAsPaid;
     private ListMyOrdersService listMine;
+    private ListAllOrdersService listAll;
 
     @BeforeEach
     void setUp() {
         orders = new Fakes.Orders();
         markAsPaid = new MarkOrderAsPaidService(orders);
         listMine = new ListMyOrdersService(orders);
+        listAll = new ListAllOrdersService(orders);
     }
 
     /** An order of {@code customer}, placed on a given day of October 2026 at 10:00 Bogota. */
@@ -113,5 +115,29 @@ class OrderQueriesTest {
     @CsvSource({"0, 20", "-1, 20", "1, 0", "1, 101"})
     void refusesAPageOrALimitOutOfRange(int page, int limit) {
         assertThatThrownBy(() -> listMine.execute(CUSTOMER, page, limit)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // The administration reads every order -----------------------------------------------------------
+
+    @Test
+    void listsTheOrdersOfEveryCustomer_newestFirst_inBoundedPages() {
+        orderOn(1, CUSTOMER, 12);
+        orderOn(2, OTHER_CUSTOMER, 14);
+        orderOn(3, CUSTOMER, 13);
+
+        OrderPage first = listAll.execute(1, 2);
+        OrderPage second = listAll.execute(2, 2);
+
+        assertThat(first.data()).extracting(Order::id).containsExactly(new UUID(0, 2), new UUID(0, 3));
+        assertThat(second.data()).extracting(Order::id).containsExactly(new UUID(0, 1));
+        assertThat(first.total()).isEqualTo(3);
+        assertThat(first.totalPages()).isEqualTo(2);
+    }
+
+    @Test
+    void neverAnswersAnUnboundedList() {
+        assertThatThrownBy(() -> listAll.execute(0, 20)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> listAll.execute(1, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> listAll.execute(1, ListAllOrdersService.MAX_LIMIT + 1)).isInstanceOf(IllegalArgumentException.class);
     }
 }

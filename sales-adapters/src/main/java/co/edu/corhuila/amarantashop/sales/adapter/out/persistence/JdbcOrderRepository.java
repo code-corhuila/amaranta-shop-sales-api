@@ -90,6 +90,17 @@ public class JdbcOrderRepository implements OrderRepository {
         return new OrderPage(orders, page, limit, total == null ? 0 : total);
     }
 
+    @Override
+    public OrderPage findAll(int page, int limit) {
+        Long total = jdbc.queryForObject("SELECT count(*) FROM sales.orders", Long.class);
+        List<Row> rows = jdbc.query("SELECT * FROM sales.orders ORDER BY created_at DESC, id LIMIT ? OFFSET ?",
+                (rs, i) -> row(rs), limit, (long) (page - 1) * limit);
+        var lines = linesOf(rows.stream().map(r -> r.id).toList());
+        List<Order> orders = new ArrayList<>();
+        rows.forEach(r -> orders.add(r.toOrder(lines.getOrDefault(r.id, List.of()))));
+        return new OrderPage(orders, page, limit, total == null ? 0 : total);
+    }
+
     private void insertOrder(Order o) {
         jdbc.update("""
                 INSERT INTO sales.orders (id, customer_id, channel, created_by, total_amount, status, fulfillment_method,

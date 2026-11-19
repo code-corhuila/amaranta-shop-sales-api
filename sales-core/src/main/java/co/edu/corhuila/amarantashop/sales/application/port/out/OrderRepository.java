@@ -24,4 +24,7 @@ public interface OrderRepository {
 
     /** The orders of one customer, newest first. {@code page} starts at 1. */
     OrderPage findByCustomer(UUID customerId, int page, int limit);
+
+    /** Every order of the shop, newest first. {@code page} starts at 1. */
+    OrderPage findAll(int page, int limit);
 }

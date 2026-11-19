@@ -105,4 +105,21 @@ public abstract class OrderRepositoryContract {
         assertThat(first.totalPages()).isEqualTo(2);
         assertThat(repository().findByCustomer(CUSTOMER, 3, 2).data()).isEmpty();
     }
+
+    @Test
+    void listsTheOrdersOfEveryCustomer_newestFirst_inBoundedPages() {
+        repository().saveNew(order(1, CUSTOMER, 12), "key-1-bbbbbbbb");
+        repository().saveNew(order(2, OTHER, 15), "key-2-bbbbbbbb");
+        repository().saveNew(order(3, CUSTOMER, 13), "key-3-bbbbbbbb");
+
+        OrderPage first = repository().findAll(1, 2);
+        OrderPage second = repository().findAll(2, 2);
+
+        assertThat(first.data()).extracting(Order::id).containsExactly(new UUID(0, 2), new UUID(0, 3));
+        assertThat(second.data()).extracting(Order::id).containsExactly(new UUID(0, 1));
+        assertThat(first.total()).isEqualTo(3);
+        assertThat(first.totalPages()).isEqualTo(2);
+        assertThat(first.data().get(0).lines()).hasSize(1);   // the lines come with the order
+        assertThat(repository().findAll(3, 2).data()).isEmpty();
+    }
 }
